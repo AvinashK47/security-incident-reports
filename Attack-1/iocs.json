@@ -1,0 +1,55 @@
+{
+  "incident_id": "INCIDENT-2026-10-02-001",
+  "title": "Attack-1: The r2sh Redis-to-Shell Botnet Intrusion",
+  "date": "2026-10-02",
+  "iocs": {
+    "network": {
+      "attacker_ips": [
+        "103.230.144.104"
+      ],
+      "malware_infrastructure_ips": [
+        "195.178.110.29",
+        "85.215.219.126",
+        "158.220.105.179",
+        "138.197.174.121"
+      ],
+      "c2_domains": [
+        "2342428.airdns.org"
+      ]
+    },
+    "ssh": {
+      "compromised_keys": [
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAVZyWMNJugW0pgVM3gw6wXOwoF36B62M0Py+ZIdwepl #r2sh-fleet-box2"
+      ]
+    },
+    "filesystem": {
+      "malicious_paths": [
+        "/opt/scanner",
+        "/var/tmp/public",
+        "/tmp/work.json",
+        "/tmp/scanner_work",
+        "/tmp/.sysh",
+        "/var/tmp/.sysh"
+      ],
+      "malicious_binaries": [
+        "masscan",
+        "worker.py",
+        "xmrig",
+        "entrypoint.sh",
+        "init.sh"
+      ]
+    },
+    "cryptocurrency": {
+      "monero_wallet": "47Gju616BichSCU9PzyZGCHASkSwo7rH1N9v7Q5SqvFSjcFjrTXbJMqEzgHDinJFtEPL7o3n9nqMuEr6KvrYCaqeGAbdDXR",
+      "mining_pool": "85.215.219.126:443"
+    },
+    "docker": {
+      "container_names": [
+        "sys-helper"
+      ],
+      "base_images_abused": [
+        "eclipse-temurin:21-alpine"
+      ]
+    }
+  }
+}
