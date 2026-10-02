@@ -27,21 +27,45 @@ Through deep Linux forensics (`tcpdump`, `journalctl`, `strace`, `cgroup` inspec
 The following chronological timeline documents each milestone from initial host provisioning through compromise, investigation, eradication, and full recovery, paired directly with the exact raw forensic log captured at that moment.
 
 ```mermaid
-timeline
-    title Incident Chronology & Resolution
-    2026-09-30 : Host Provisioned (OCI Mumbai)
-    2026-10-01 16:27 : Unprotected Redis probed
-                     : R2SH SSH Key Overwrite
-                     : 'sys-helper' Miner Spawned
-    2026-10-02 03:26 : Watchdog Crontab Installed
-    2026-10-02 04:25 : Outbound TCP Blackholing (Silent Drops)
-    2026-10-02 04:43 : CI/CD Build Fails (Exit 137)
-    2026-10-02 05:00 : Masscan Sweep on enp0s6
-    2026-10-02 05:03 : strace Catches Hostile SIGKILL
-    2026-10-02 05:06 : #r2sh-fleet-box2 Backdoor Found
-    2026-10-02 05:10 : Eradication & Hardening (chattr +i)
-    2026-10-02 05:18 : Recovery & 100% Build Pass
+flowchart TD
+    subgraph P1["Phase 1: Initial Ingress & Exploitation"]
+        M1["2026-09-30 07:09 UTC - VM Provisioned in OCI Mumbai"]
+        M2["2026-10-01 16:27 UTC - Unprotected Redis 6379 Probed"]
+        M3["2026-10-01 16:27 UTC - r2sh SSH Key Overwrite (#r2sh-fleet-box2)"]
+        M4["2026-10-01 16:27 UTC - Rogue Docker Miner 'sys-helper' Spawned"]
+        M1 --> M2 --> M3 --> M4
+    end
+
+    subgraph P2["Phase 2: Persistence & Service Disruption"]
+        M5["2026-10-02 03:26 UTC - Watchdog Cron Installed (init.sh)"]
+        M6["2026-10-02 04:25 UTC - Outbound TCP Dropped on Port 5432 (tcpdump)"]
+        M7["2026-10-02 04:43 UTC - CI/CD Pipeline Killed with Exit Status 137"]
+        M8["2026-10-02 05:00 UTC - Attacker SSH Login & Masscan Sweep on enp0s6"]
+        M4 --> M5 --> M6 --> M7 --> M8
+    end
+
+    subgraph P3["Phase 3: Triage, Eradication & Full Recovery"]
+        M9["2026-10-02 05:03 UTC - strace Catches Hostile Userspace SIGKILL"]
+        M10["2026-10-02 05:06 UTC - Backdoor Key Isolated in authorized_keys"]
+        M11["2026-10-02 05:10 UTC - Malware Killed, Cron Purged, chattr +i Set"]
+        M12["2026-10-02 05:18 UTC - CI/CD Build Succeeded & Exec AI Live"]
+        M8 --> M9 --> M10 --> M11 --> M12
+    end
 ```
+
+| # | Timestamp (UTC) | Phase | Event Summary | Evidence Artifact |
+|---|---|---|---|---|
+| **1** | `2026-09-30 07:09` | Baseline | Target VM provisioned in OCI Mumbai | `cloud-init`, `systemd` |
+| **2** | `2026-10-01 16:27` | Initial Access | Redis `CONFIG SET` arbitrary file overwrite | RDB binary dump with SSH key |
+| **3** | `2026-10-01 16:27` | Execution | Rogue XMRig miner container (`sys-helper`) | `docker inspect` |
+| **4** | `2026-10-02 03:26` | Persistence | Watchdog crontab fetches `init.sh` from C2 | `crontab -l` |
+| **5** | `2026-10-02 04:25` | Network Degradation | Outbound TCP blackholing on database ports | `tcpdump` SYN packet drops |
+| **6** | `2026-10-02 04:43` | Impact | CI/CD build aborted with Exit Status 137 | GitHub Actions runner console log |
+| **7** | `2026-10-02 05:00` | Lateral Recon | SSH login from `103.230.144.104` & masscan sweep | `/var/log/auth.log`, `ps aux` |
+| **8** | `2026-10-02 05:03` | Root Cause | Hostile `SIGKILL` intercepted by syscall tracing | `strace -f -e trace=process,signal` |
+| **9** | `2026-10-02 05:06` | Attribution | `#r2sh-fleet-box2` backdoor key identified | `authorized_keys` |
+| **10** | `2026-10-02 05:10` | Eradication | Processes killed, cron wiped, immutable lock set | `lsattr`, `ss -tlnp`, `ufw status` |
+| **11** | `2026-10-02 05:18` | Recovery | 100% build pass; Gemini 3.5 Flash Lite operational | GitHub Actions Run #36967826100 |
 
 ---
 
